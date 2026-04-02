@@ -1,0 +1,246 @@
+"""
+LoreMaster-AI - RAG Pipeline
+
+Main entry point for the LoreMaster Q&A system.
+Integrates all components: Query Processing → Retrieval → Context Assembly → Answer Generation
+"""
+
+import json
+import logging
+import os
+import sys
+import time
+from typing import Dict, List, Optional
+
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+sys.path.insert(0, PROJECT_ROOT)
+
+from src.agent.query_processor import QueryProcessor
+from src.agent.retriever import HybridRetriever
+from src.agent.context_assembler import ContextAssembler
+from src.agent.answer_generator import AnswerGenerator
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
+
+
+class LoreMasterPipeline:
+    """
+    Main RAG pipeline for Genshin Impact lore Q&A.
+
+    Architecture:
+    ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+    │ Query Processor │ ──▶ │ Hybrid Retriever│ ──▶ │Context Assembler│
+    │                 │     │                 │     │                 │
+    │ • Entity Extract│     │ • Vector Search │     │ • Format Graph  │
+    │ • Alias Resolve │     │ • Graph Search  │     │ • Format Text   │
+    │ • Query Classify│     │ • Path Discovery│     │ • Token Control │
+    │ • Embed Query   │     │ • P3 Full Text  │     │                 │
+    └─────────────────┘     └─────────────────┘     └─────────────────┘
+                                                            │
+                                                            ▼
+                                                    ┌─────────────────┐
+                                                    │Answer Generator │
+                                                    │                 │
+                                                    │ • Claude Sonnet │
+                                                    │ • Prompt Eng.   │
+                                                    │ • Citations     │
+                                                    └─────────────────┘
+    """
+
+    def __init__(
+        self,
+        vector_top_k: int = 8,
+        graph_max_relations: int = 15,
+        verbose: bool = False,
+    ):
+        """
+        Initialize the pipeline with all components.
+
+        Args:
+            vector_top_k: Number of vector search results
+            graph_max_relations: Max relations per entity from graph
+            verbose: Enable detailed logging
+        """
+        self.vector_top_k = vector_top_k
+        self.graph_max_relations = graph_max_relations
+        self.verbose = verbose
+
+        logger.info("Initializing LoreMaster Pipeline...")
+
+        # Initialize components
+        self.query_processor = QueryProcessor()
+        self.retriever = HybridRetriever()
+        self.context_assembler = ContextAssembler()
+        self.answer_generator = AnswerGenerator()
+
+        logger.info("Pipeline ready!")
+
+    def close(self):
+        """Close database connections."""
+        self.retriever.close()
+
+    def answer(self, question: str) -> dict:
+        """
+        Answer a user question using the full RAG pipeline.
+
+        Args:
+            question: User's question about Genshin Impact lore
+
+        Returns:
+            Dict containing:
+            - question: Original question
+            - answer: Generated answer
+            - sources: Source documents used
+            - entities: Detected entities
+            - query_type: Query classification
+            - timing: Processing time breakdown
+            - usage: Token usage and cost
+        """
+        result = {
+            "question": question,
+            "answer": "",
+            "sources": [],
+            "entities": [],
+            "query_type": "",
+            "path": None,
+            "timing": {},
+            "usage": {},
+        }
+
+        total_start = time.time()
+
+        # ============================================
+        # Step 1: Query Processing
+        # ============================================
+        step_start = time.time()
+
+        processed = self.query_processor.process(question)
+
+        result["entities"] = processed["canonical_entities"]
+        result["query_type"] = processed["query_type"]
+        result["timing"]["query_processing"] = round(time.time() - step_start, 3)
+
+        if self.verbose:
+            logger.info("Query processed: entities=%s, type=%s",
+                       processed["canonical_entities"], processed["query_type"])
+
+        # ============================================
+        # Step 2: Hybrid Retrieval
+        # ============================================
+        step_start = time.time()
+
+        retrieval_results = self.retriever.retrieve(
+            query=question,
+            embedding=processed["embedding"],
+            entities=processed["canonical_entities"],
+            query_type=processed["query_type"],
+            vector_top_k=self.vector_top_k,
+            graph_max_relations=self.graph_max_relations,
+        )
+
+        result["sources"] = [
+            {"title": r["title"], "score": r["score"]}
+            for r in retrieval_results["vector_results"]
+        ]
+        # Store full vector results for API access
+        result["_vector_results"] = retrieval_results["vector_results"]
+
+        path_results = retrieval_results.get("path_results")
+        if path_results and path_results.get("found"):
+            result["path"] = {
+                "nodes": path_results.get("nodes", []),
+                "relations": path_results.get("relations", []),
+                "evidences": path_results.get("evidences", []),
+                "alternative_paths": [
+                    {"nodes": alt.get("nodes", []), "relations": alt.get("relations", [])}
+                    for alt in path_results.get("alternative_paths", [])
+                ],
+            }
+
+        result["timing"]["retrieval"] = round(time.time() - step_start, 3)
+
+        if self.verbose:
+            logger.info("Retrieved: %d chunks, %d graph results",
+                       len(retrieval_results["vector_results"]),
+                       len(retrieval_results["graph_results"]))
+
+        # ============================================
+        # Step 3: Context Assembly
+        # ============================================
+        step_start = time.time()
+
+        context = self.context_assembler.assemble(
+            vector_results=retrieval_results["vector_results"],
+            graph_results=retrieval_results["graph_results"],
+            path_results=retrieval_results.get("path_results"),
+            query_type=processed["query_type"],
+            query_entities=processed["canonical_entities"],  # #6: For reranking
+        )
+
+        result["timing"]["context_assembly"] = round(time.time() - step_start, 3)
+        result["context_stats"] = context["stats"]
+
+        if self.verbose:
+            logger.info("Context assembled: %d tokens (%.1f%% budget)",
+                       context["stats"]["total_tokens"],
+                       context["stats"]["budget_used_pct"])
+
+        # ============================================
+        # Step 4: Answer Generation
+        # ============================================
+        step_start = time.time()
+
+        answer_result = self.answer_generator.generate(
+            question=question,
+            context=context["full_context"],
+        )
+
+        result["answer"] = answer_result["answer"]
+        result["usage"] = answer_result["usage"]
+        result["timing"]["answer_generation"] = round(time.time() - step_start, 3)
+
+        # ============================================
+        # Finalize
+        # ============================================
+        result["timing"]["total"] = round(time.time() - total_start, 3)
+
+        return result
+
+    def answer_batch(self, questions: List[str]) -> List[dict]:
+        """Answer multiple questions."""
+        return [self.answer(q) for q in questions]
+
+
+def demo():
+    """Run a demo of the pipeline."""
+    pipeline = LoreMasterPipeline(verbose=True)
+
+    test_questions = [
+        "What is the relationship between Scaramouche and Raiden Shogun?",
+        "Who is Nahida?",
+        "为什么流浪者要从世界树抹除自己的存在？",
+    ]
+
+    for question in test_questions:
+        print("\n" + "=" * 70)
+        print(f"Q: {question}")
+        print("=" * 70)
+
+        result = pipeline.answer(question)
+
+        print(f"\nA: {result['answer']}")
+        print(f"\n--- Metadata ---")
+        print(f"Entities: {result['entities']}")
+        print(f"Query Type: {result['query_type']}")
+        if result['path']:
+            print(f"Path: {' → '.join(result['path'])}")
+        print(f"Sources: {[s['title'] for s in result['sources'][:3]]}")
+        print(f"Timing: {result['timing']}")
+        print(f"Cost: ${result['usage']['cost_usd']:.6f}")
+
+    pipeline.close()
+
+
+if __name__ == "__main__":
+    demo()

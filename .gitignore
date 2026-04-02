@@ -1,0 +1,91 @@
+# ============================================
+# LoreMaster-AI .gitignore
+# ============================================
+
+# --------------------------------------------
+# Environment & Secrets
+# --------------------------------------------
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+credentials.json
+
+# --------------------------------------------
+# Python
+# --------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+ENV/
+.eggs/
+*.egg-info/
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+
+# --------------------------------------------
+# Data Files (too large for git)
+# --------------------------------------------
+data/raw/
+data/processed/
+*.parquet
+
+# Exclude large data files by default, but allow ablation study results
+*.jsonl
+!data/ablation/questions.jsonl
+!data/ablation/gold_references.jsonl
+!data/ablation/runs/*.jsonl
+!data/ablation/eval/*.jsonl
+
+*.csv
+!data/ablation/eval/summary.csv
+
+*.json
+!config/*.json
+!tests/fixtures/*.json
+!data/ablation/oracle_checkpoint.json
+!data/ablation/runs/*.checkpoint.json
+
+# --------------------------------------------
+# IDE & Editor
+# --------------------------------------------
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.settings/
+
+# --------------------------------------------
+# OS Generated
+# --------------------------------------------
+.DS_Store
+.DS_Store?
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# --------------------------------------------
+# AWS
+# --------------------------------------------
+.aws/
+*.tfstate
+*.tfstate.*
+.terraform/
+
+# --------------------------------------------
+# Logs & Temp Files
+# --------------------------------------------
+*.log
+logs/
+tmp/
+temp/
