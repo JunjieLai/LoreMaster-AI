@@ -190,7 +190,7 @@ Builds the entity alias resolution table and writes it to DynamoDB:
 
 Uses Claude Sonnet 4 to extract structured triples from documents:
 - Triple format: `{"subject": "Nahida", "relation": "IS_ARCHON_OF", "object": "Sumeru", "evidence": "..."}`
-- ~1,000+ entities, ~2,000+ relationship triples extracted
+- 3,494 entities, 4,199 relationship triples extracted
 
 ### Step 9 — Multi-Target Loading
 **Script**: `src/graph/load.py`
@@ -223,8 +223,8 @@ data/
 │   │   └── wiki_embeddings.jsonl        # ★ 4,059 × 1,536-dim vectors [Step 7]
 │   └── triples/
 │       ├── extract_raw.jsonl            # Raw LLM extraction output
-│       ├── entities.jsonl               # ★ ~1,000+ entities          [Step 8]
-│       └── triples.jsonl               # ★ ~2,000+ relationship triples [Step 8]
+│       ├── entities.jsonl               # ★ 3,494 entities             [Step 8]
+│       └── triples.jsonl               # ★ 4,199 relationship triples  [Step 8]
 │
 ├── metadata/
 │   ├── wiki_schema.json                 # Field schema definition
@@ -305,7 +305,7 @@ processed/triples/entities.jsonl + triples.jsonl  ★
     │
     │  Step 9 — load.py  [single run, three targets]
     ├──▶  Pinecone:  batch-upsert 4,059 vectors with metadata
-    ├──▶  Neo4j:     CREATE ~1,000+ entity nodes + MERGE ~2,000+ relationship edges
+    ├──▶  Neo4j:     CREATE 3,494 entity nodes + MERGE 4,199 relationship edges
     └──▶  DynamoDB:  entity metadata table + alias mapping table
 ```
 
@@ -317,8 +317,8 @@ processed/triples/entities.jsonl + triples.jsonl  ★
 | After Sumeru filter | ~5,500 | ~25% retention |
 | After deduplication & cleaning | **4,059** | 18.3% of raw |
 | Vector chunks | 4,059 | 1,536 dims each |
-| Neo4j entity nodes | ~1,000+ | Extracted by Claude |
-| Neo4j relationship edges | ~2,000+ | With evidence text |
+| Neo4j entity nodes | **3,494** | Character×1157, Item×851, Concept×463, Location×443, Event×390, Organization×190 |
+| Neo4j relationship edges | **4,199** | 21 relation types; top: LOCATED_IN×879, PARTICIPATED_IN×564, PART_OF×514 |
 | Test questions | 50 | T1×10 / T2×15 / T3×13 / T4×12 |
 | Ablation answers | 400 | 8 configs × 50 questions |
 | Opus evaluations | 400 | One per answer |
@@ -426,7 +426,7 @@ All split panels are independently resizable with drag handles.
 ### 8.2 Graph Explorer
 
 Full-screen, interactive knowledge graph browser:
-- Visualizes the entire Neo4j knowledge graph (~1,000+ nodes, ~2,000+ edges)
+- Visualizes the entire Neo4j knowledge graph (3,494 nodes, 4,199 edges)
 - Filter by entity type (Character, NPC, Location, Region, Lore, Quest)
 - Click any node to inspect all its relationships and evidence text
 - Force-directed layout with physics simulation

@@ -155,8 +155,8 @@ data/
 │   ├── embeddings/
 │   │   └── wiki_embeddings.jsonl    # ★ 4,059 × 1536 维向量 [步骤 7]
 │   └── triples/
-│       ├── entities.jsonl           # ★ ~1,000+ 实体       [步骤 8]
-│       └── triples.jsonl           # ★ ~2,000+ 关系三元组  [步骤 8]
+│       ├── entities.jsonl           # ★ 3,494 个实体          [步骤 8]
+│       └── triples.jsonl           # ★ 4,199 条关系三元组    [步骤 8]
 ├── metadata/                         # 运行清单与 Schema 定义
 └── ablation/
     ├── questions.jsonl               # ★ 50 道测试题
@@ -227,7 +227,7 @@ entities.jsonl + triples.jsonl  ★
     |
     |  步骤 9 — load.py  [单次运行，三个目标]
     +---> Pinecone：批量 upsert 4,059 条向量及元数据
-    +---> Neo4j：CREATE ~1,000+ 实体节点 + MERGE ~2,000+ 关系边
+    +---> Neo4j：CREATE 3,494 个实体节点 + MERGE 4,199 条关系边
     +---> DynamoDB：实体元数据表 + 别名映射表
 ```
 
@@ -239,8 +239,8 @@ entities.jsonl + triples.jsonl  ★
 | 须弥过滤后 | ~5,500 | 约 25% 保留率 |
 | 去重清洗后 | **4,059** | 原始数据的 18.3% |
 | 向量块 | 4,059 | 每条 1,536 维 |
-| Neo4j 实体节点 | ~1,000+ | Claude 抽取 |
-| Neo4j 关系边 | ~2,000+ | 含证据文本 |
+| Neo4j 实体节点 | **3,494** | Character×1157、Item×851、Concept×463、Location×443、Event×390、Organization×190 |
+| Neo4j 关系边 | **4,199** | 21 种关系类型；最多：LOCATED_IN×879、PARTICIPATED_IN×564、PART_OF×514 |
 | 测试题 | 50 | T1×10 / T2×15 / T3×13 / T4×12 |
 | 消融实验回答 | 400 | 8 配置 × 50 题 |
 | Opus 评估次数 | 400 | 每条回答一次 |
@@ -348,7 +348,7 @@ React 前端提供多面板可调整大小的布局，所有分割面板均可�
 
 ### 8.2 知识图谱浏览器（Graph Explorer）
 
-- 可视化完整 Neo4j 知识图谱（~1,000+ 节点，~2,000+ 边）
+- 可视化完整 Neo4j 知识图谱(3,494 节点，4,199 条边)
 - 按实体类型筛选（Character / NPC / Location / Region / Lore / Quest）
 - 点击节点查看所有关系和证据文本
 - 力导向布局 + 物理仿真
