@@ -225,8 +225,8 @@ class ContextAssembler:
                     # Add evidence if available
                     evidence = rel.get("evidence")
                     if evidence:
-                        evidence_short = evidence[:100]
-                        if len(evidence) > 100:
+                        evidence_short = evidence[:220]
+                        if len(evidence) > 220:
                             evidence_short += "..."
                         rel_line += f'\n    Evidence: "{evidence_short}"'
 

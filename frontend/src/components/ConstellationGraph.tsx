@@ -1,11 +1,36 @@
 import { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { PathData, ENTITY_COLORS } from '../types';
+import { PathData, GraphResult, ENTITY_COLORS } from '../types';
 import { useTheme } from '../App';
 import { useThumbnail } from '../hooks/useThumbnail';
 
 interface ConstellationGraphProps {
-  pathData: PathData;
+  pathData?: PathData | null;
+  graphResults?: GraphResult[];
+}
+
+/** Convert entity neighborhood data into a PathData-compatible structure for rendering. */
+function buildFallbackPathData(graphResults: GraphResult[]): PathData {
+  const nodes = graphResults.map(r => r.entity.name);
+  // Only draw edges between entities that are both present in graphResults,
+  // to prevent external neighbors from bleeding in from a previous graph.
+  const entitySet = new Set(nodes);
+  const altPaths: { nodes: string[]; relations: string[] }[] = [];
+  const seen = new Set<string>();
+
+  graphResults.forEach(r => {
+    r.relationships.slice(0, 5).forEach(rel => {
+      const from = rel.direction === 'outgoing' ? r.entity.name : (rel.source ?? '');
+      const to   = rel.direction === 'outgoing' ? (rel.target ?? '') : r.entity.name;
+      const key  = `${from}__${rel.relation}__${to}`;
+      if (from && to && from !== to && !seen.has(key) && entitySet.has(from) && entitySet.has(to)) {
+        seen.add(key);
+        altPaths.push({ nodes: [from, to], relations: [rel.relation] });
+      }
+    });
+  });
+
+  return { nodes, relations: [], evidences: [], alternative_paths: altPaths };
 }
 
 interface NodePosition {
@@ -346,7 +371,7 @@ function ConnectionLine({
   source,
   target,
   relation,
-  isAlternative,
+  isAlternative: _isAlternative,
   nodeMap,
   isHighlighted,
 }: {
@@ -420,26 +445,40 @@ function ConnectionLine({
   );
 }
 
-export function ConstellationGraph({ pathData }: ConstellationGraphProps) {
+export function ConstellationGraph({ pathData, graphResults }: ConstellationGraphProps) {
   const { hoveredEntity, setHoveredEntity, selectedEntity, setSelectedEntity } = useTheme();
   const [localHovered, setLocalHovered] = useState<string | null>(null);
 
+  // Use pathData if available, otherwise build fallback from entity neighborhoods.
+  // Cap alternative_paths to 2 to prevent distant graph traversals from including
+  // unrelated nodes (e.g. entities from a previous question's graph).
+  const effectivePathData = useMemo(() => {
+    if (pathData) {
+      return {
+        ...pathData,
+        alternative_paths: (pathData.alternative_paths ?? []).slice(0, 2),
+      };
+    }
+    if (graphResults && graphResults.length > 0) return buildFallbackPathData(graphResults);
+    return null;
+  }, [pathData, graphResults]);
+
   const dimensions = useMemo(() => {
-    const mainNodeSet = new Set(pathData.nodes);
+    if (!effectivePathData) return { width: 700, height: 320 };
+    const mainNodeSet = new Set(effectivePathData.nodes);
     const altNodes = new Set<string>();
-    pathData.alternative_paths?.forEach(ap => {
+    effectivePathData.alternative_paths?.forEach(ap => {
       ap.nodes.forEach(n => { if (!mainNodeSet.has(n)) altNodes.add(n); });
     });
     const altCount = altNodes.size;
     if (altCount === 0) return { width: 700, height: 320 };
-    // Estimate rows assuming ~3 nodes per row; add 110px per extra row
     const estimatedRows = Math.max(1, Math.ceil(altCount / 3));
     return { width: 700, height: 390 + Math.max(0, estimatedRows - 1) * 110 };
-  }, [pathData]);
+  }, [effectivePathData]);
 
   const { nodes, links, nodeMap } = useMemo(
-    () => calculateLayout(pathData, dimensions.width, dimensions.height),
-    [pathData, dimensions]
+    () => effectivePathData ? calculateLayout(effectivePathData, dimensions.width, dimensions.height) : { nodes: [], links: [], nodeMap: new Map() },
+    [effectivePathData, dimensions]
   );
 
   const handleNodeHover = (nodeId: string, hovered: boolean) => {
@@ -500,7 +539,7 @@ export function ConstellationGraph({ pathData }: ConstellationGraphProps) {
 
       {/* Evidence Section */}
       <AnimatePresence>
-        {pathData.evidences && pathData.evidences.length > 0 && (
+        {effectivePathData?.evidences && effectivePathData.evidences.length > 0 && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -509,7 +548,7 @@ export function ConstellationGraph({ pathData }: ConstellationGraphProps) {
           >
             <p className="text-[10px] text-primary/60 uppercase tracking-wider mb-1">Evidence</p>
             <p className="text-xs text-gray-400 italic line-clamp-2">
-              "{pathData.evidences[0]}"
+              "{effectivePathData!.evidences![0]}"
             </p>
           </motion.div>
         )}

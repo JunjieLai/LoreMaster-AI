@@ -3,6 +3,10 @@ LoreMaster-AI - RAG Pipeline
 
 Main entry point for the LoreMaster Q&A system.
 Integrates all components: Query Processing → Retrieval → Context Assembly → Answer Generation
+
+Optimizations applied:
+- SemanticAnswerCache: identical/similar questions skip the full pipeline (<100ms, zero cost)
+- SessionManager: multi-turn conversation history injected into generation
 """
 
 import json
@@ -19,6 +23,8 @@ from src.agent.query_processor import QueryProcessor
 from src.agent.retriever import HybridRetriever
 from src.agent.context_assembler import ContextAssembler
 from src.agent.answer_generator import AnswerGenerator
+from src.agent.query_cache import SemanticAnswerCache, get_answer_cache
+from src.agent.session_manager import Session
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -35,7 +41,7 @@ class LoreMasterPipeline:
     │ • Entity Extract│     │ • Vector Search │     │ • Format Graph  │
     │ • Alias Resolve │     │ • Graph Search  │     │ • Format Text   │
     │ • Query Classify│     │ • Path Discovery│     │ • Token Control │
-    │ • Embed Query   │     │ • P3 Full Text  │     │                 │
+    │ • Embed Query   │     │ • Circuit Breaker     │                 │
     └─────────────────┘     └─────────────────┘     └─────────────────┘
                                                             │
                                                             ▼
@@ -43,8 +49,8 @@ class LoreMasterPipeline:
                                                     │Answer Generator │
                                                     │                 │
                                                     │ • Claude Sonnet │
-                                                    │ • Prompt Eng.   │
-                                                    │ • Citations     │
+                                                    │ • Prompt Cache  │
+                                                    │ • Streaming     │
                                                     └─────────────────┘
     """
 
@@ -54,25 +60,17 @@ class LoreMasterPipeline:
         graph_max_relations: int = 15,
         verbose: bool = False,
     ):
-        """
-        Initialize the pipeline with all components.
-
-        Args:
-            vector_top_k: Number of vector search results
-            graph_max_relations: Max relations per entity from graph
-            verbose: Enable detailed logging
-        """
         self.vector_top_k = vector_top_k
         self.graph_max_relations = graph_max_relations
         self.verbose = verbose
 
         logger.info("Initializing LoreMaster Pipeline...")
 
-        # Initialize components
         self.query_processor = QueryProcessor()
         self.retriever = HybridRetriever()
         self.context_assembler = ContextAssembler()
         self.answer_generator = AnswerGenerator()
+        self.answer_cache = get_answer_cache()
 
         logger.info("Pipeline ready!")
 
@@ -80,22 +78,16 @@ class LoreMasterPipeline:
         """Close database connections."""
         self.retriever.close()
 
-    def answer(self, question: str) -> dict:
+    def answer(self, question: str, session: Optional[Session] = None) -> dict:
         """
         Answer a user question using the full RAG pipeline.
 
         Args:
             question: User's question about Genshin Impact lore
+            session: Optional Session object for multi-turn conversation context
 
         Returns:
-            Dict containing:
-            - question: Original question
-            - answer: Generated answer
-            - sources: Source documents used
-            - entities: Detected entities
-            - query_type: Query classification
-            - timing: Processing time breakdown
-            - usage: Token usage and cost
+            Dict containing answer, sources, entities, query_type, timing, usage
         """
         result = {
             "question": question,
@@ -106,16 +98,37 @@ class LoreMasterPipeline:
             "path": None,
             "timing": {},
             "usage": {},
+            "cache_hit": False,
         }
 
         total_start = time.time()
 
         # ============================================
-        # Step 1: Query Processing
+        # Step 0: Semantic Cache Check
+        # Check cache before any expensive API calls.
+        # embed_query uses LRU so repeated questions are instant.
+        # ============================================
+        embedding_for_cache = self.query_processor.embed_query(question)
+        cached_result = self.answer_cache.lookup(embedding_for_cache)
+        if cached_result is not None:
+            cached_copy = dict(cached_result)
+            cached_copy["cache_hit"] = True
+            cached_copy["timing"] = {"total": round(time.time() - total_start, 3)}
+            return cached_copy
+
+        # ============================================
+        # Step 1: Query Processing (parallel API calls)
         # ============================================
         step_start = time.time()
 
-        processed = self.query_processor.process(question)
+        # Apply coreference resolution if session history exists
+        resolved_question = question
+        if session and session.turns:
+            from src.agent.session_manager import get_session_manager
+            sm = get_session_manager()
+            resolved_question = sm.resolve_coreferences(question, session)
+
+        processed = self.query_processor.process(resolved_question)
 
         result["entities"] = processed["canonical_entities"]
         result["query_type"] = processed["query_type"]
@@ -131,7 +144,7 @@ class LoreMasterPipeline:
         step_start = time.time()
 
         retrieval_results = self.retriever.retrieve(
-            query=question,
+            query=resolved_question,
             embedding=processed["embedding"],
             entities=processed["canonical_entities"],
             query_type=processed["query_type"],
@@ -143,7 +156,6 @@ class LoreMasterPipeline:
             {"title": r["title"], "score": r["score"]}
             for r in retrieval_results["vector_results"]
         ]
-        # Store full vector results for API access
         result["_vector_results"] = retrieval_results["vector_results"]
 
         path_results = retrieval_results.get("path_results")
@@ -160,11 +172,6 @@ class LoreMasterPipeline:
 
         result["timing"]["retrieval"] = round(time.time() - step_start, 3)
 
-        if self.verbose:
-            logger.info("Retrieved: %d chunks, %d graph results",
-                       len(retrieval_results["vector_results"]),
-                       len(retrieval_results["graph_results"]))
-
         # ============================================
         # Step 3: Context Assembly
         # ============================================
@@ -175,25 +182,26 @@ class LoreMasterPipeline:
             graph_results=retrieval_results["graph_results"],
             path_results=retrieval_results.get("path_results"),
             query_type=processed["query_type"],
-            query_entities=processed["canonical_entities"],  # #6: For reranking
+            query_entities=processed["canonical_entities"],
         )
 
         result["timing"]["context_assembly"] = round(time.time() - step_start, 3)
         result["context_stats"] = context["stats"]
 
-        if self.verbose:
-            logger.info("Context assembled: %d tokens (%.1f%% budget)",
-                       context["stats"]["total_tokens"],
-                       context["stats"]["budget_used_pct"])
-
         # ============================================
-        # Step 4: Answer Generation
+        # Step 4: Answer Generation (with Prompt Cache + session history)
         # ============================================
         step_start = time.time()
+
+        history = ""
+        if session:
+            from src.agent.session_manager import get_session_manager
+            history = get_session_manager().get_history_context(session)
 
         answer_result = self.answer_generator.generate(
             question=question,
             context=context["full_context"],
+            history=history,
         )
 
         result["answer"] = answer_result["answer"]
@@ -201,9 +209,13 @@ class LoreMasterPipeline:
         result["timing"]["answer_generation"] = round(time.time() - step_start, 3)
 
         # ============================================
-        # Finalize
+        # Finalize + Cache Store
         # ============================================
         result["timing"]["total"] = round(time.time() - total_start, 3)
+
+        # Store in semantic cache (don't cache session-contextualized answers)
+        if not session or not session.turns:
+            self.answer_cache.store(embedding_for_cache, question, result)
 
         return result
 
@@ -233,11 +245,12 @@ def demo():
         print(f"\n--- Metadata ---")
         print(f"Entities: {result['entities']}")
         print(f"Query Type: {result['query_type']}")
+        print(f"Cache Hit: {result['cache_hit']}")
         if result['path']:
-            print(f"Path: {' → '.join(result['path'])}")
+            print(f"Path: {result['path']}")
         print(f"Sources: {[s['title'] for s in result['sources'][:3]]}")
         print(f"Timing: {result['timing']}")
-        print(f"Cost: ${result['usage']['cost_usd']:.6f}")
+        print(f"Cost: ${result['usage'].get('cost_usd', 0):.6f}")
 
     pipeline.close()
 

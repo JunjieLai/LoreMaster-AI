@@ -496,8 +496,8 @@ def print_summary(config_names: List[str]):
 def main():
     parser = argparse.ArgumentParser(description="Phase 3: Evaluate ablation run results")
     parser.add_argument("--configs", nargs="+", default=None,
-                        choices=STUDY_CONFIGS,
-                        help="Configs to evaluate (default: all 8)")
+                        metavar="CONFIG",
+                        help="Configs to evaluate (default: all 8 STUDY_CONFIGS)")
     parser.add_argument("--resume",   action="store_true",
                         help="Skip already-evaluated answers")
     parser.add_argument("--force",    action="store_true",

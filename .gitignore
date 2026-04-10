@@ -53,6 +53,8 @@ data/processed/
 !tests/fixtures/*.json
 !data/ablation/oracle_checkpoint.json
 !data/ablation/runs/*.checkpoint.json
+# answer_cache.json is runtime-generated, excluded from repo
+data/answer_cache.json
 
 # --------------------------------------------
 # IDE & Editor

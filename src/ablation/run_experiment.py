@@ -282,7 +282,8 @@ def main():
     parser = argparse.ArgumentParser(description="Phase 2: Run ablation experiment")
     parser.add_argument("--configs", nargs="+", default=None,
                         choices=list(ABLATION_PRESETS.keys()),
-                        help="Configs to run (default: all 8 STUDY_CONFIGS)")
+                        metavar="CONFIG",
+                        help=f"Configs to run (default: all 8 STUDY_CONFIGS). Available: {', '.join(ABLATION_PRESETS.keys())}")
     parser.add_argument("--resume", action="store_true",
                         help="Skip already-completed questions per config")
     parser.add_argument("--dry-run", action="store_true",

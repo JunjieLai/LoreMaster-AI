@@ -28,6 +28,7 @@ from config.settings import (
     NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD,
 )
 from src.agent.text_loader import get_text_loader
+from src.agent.circuit_breaker import CircuitBreaker, CircuitOpenError
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -62,6 +63,10 @@ class HybridRetriever:
 
     def __init__(self):
         """Initialize connections to Pinecone and Neo4j."""
+        # Circuit breakers first — needed before any connectivity check
+        self._pinecone_cb = CircuitBreaker("pinecone", failure_threshold=3, recovery_timeout=60)
+        self._neo4j_cb = CircuitBreaker("neo4j", failure_threshold=3, recovery_timeout=60)
+
         # Pinecone
         self.pc = Pinecone(api_key=PINECONE_API_KEY)
         self.index = self.pc.Index(PINECONE_INDEX, host=PINECONE_HOST)
@@ -71,7 +76,11 @@ class HybridRetriever:
             NEO4J_URI,
             auth=(NEO4J_USER, NEO4J_PASSWORD)
         )
-        self.driver.verify_connectivity()
+        try:
+            self.driver.verify_connectivity()
+        except Exception as e:
+            logger.warning("Neo4j connectivity check failed at init (will retry at query time): %s", e)
+            self._neo4j_cb._on_failure(e)
 
         # Text loader for full text enrichment (P3)
         self.text_loader = get_text_loader()
@@ -196,7 +205,14 @@ class HybridRetriever:
         if filter_dict:
             query_params["filter"] = filter_dict
 
-        response = self.index.query(**query_params)
+        try:
+            response = self._pinecone_cb.call(self.index.query, **query_params)
+        except CircuitOpenError:
+            logger.warning("Pinecone circuit OPEN — returning empty vector results")
+            return []
+        except Exception:
+            logger.warning("Pinecone query failed — returning empty vector results")
+            return []
 
         # Convert to list of dicts
         results = []
@@ -227,6 +243,21 @@ class HybridRetriever:
         Returns:
             Dict with entity info and relationships
         """
+        if not self._neo4j_cb.is_available():
+            logger.warning("Neo4j circuit OPEN — skipping graph search for '%s'", entity_name)
+            return {"entity": None, "relationships": []}
+
+        try:
+            return self._graph_search_entity_inner(entity_name, max_relations)
+        except CircuitOpenError:
+            return {"entity": None, "relationships": []}
+        except Exception as e:
+            self._neo4j_cb._on_failure(e)
+            logger.warning("Neo4j entity search failed: %s", e)
+            return {"entity": None, "relationships": []}
+
+    def _graph_search_entity_inner(self, entity_name: str, max_relations: int = 20) -> dict:
+        """Inner implementation of graph_search_entity (actual Neo4j calls)."""
         with self.driver.session() as session:
             # Get entity info (case-insensitive matching)
             result = session.run("""
@@ -306,6 +337,21 @@ class HybridRetriever:
         Returns:
             Dict with path information including alternative paths
         """
+        _not_found = {"found": False, "entity1": entity1, "entity2": entity2, "path": None, "alternative_paths": []}
+        if not self._neo4j_cb.is_available():
+            logger.warning("Neo4j circuit OPEN — skipping path search")
+            return _not_found
+        try:
+            return self._graph_search_path_inner(entity1, entity2, max_hops, max_paths)
+        except CircuitOpenError:
+            return _not_found
+        except Exception as e:
+            self._neo4j_cb._on_failure(e)
+            logger.warning("Neo4j path search failed: %s", e)
+            return _not_found
+
+    def _graph_search_path_inner(self, entity1: str, entity2: str, max_hops: int = 3, max_paths: int = 3) -> dict:
+        """Inner implementation of graph_search_path (actual Neo4j calls)."""
         with self.driver.session() as session:
             # Find multiple paths (not just shortest)
             # Use case-insensitive matching for entity names
@@ -433,9 +479,9 @@ class HybridRetriever:
 
         # 2. Graph search based on query type
         if query_type == "RELATIONSHIP" and len(entities) >= 2:
-            # Try to find path between first two entities (max_hops=4 allows 5-node paths)
+            # Try to find path between first two entities (max_hops=5 allows 6-node paths)
             result["path_results"] = self.graph_search_path(
-                entities[0], entities[1], max_hops=4
+                entities[0], entities[1], max_hops=5
             )
             # Also get individual entity relationships
             result["graph_results"] = self.graph_search_multi_entity(

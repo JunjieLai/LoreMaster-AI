@@ -289,6 +289,15 @@ class AblationConfig:
         c.description = "GPT-4o — full hybrid (vector + graph)"
         return c
 
+    @classmethod
+    def s4_hyb_p0(cls) -> "AblationConfig":
+        """Claude Sonnet 4, full hybrid — P0 grounding prompt."""
+        c = cls.full_pipeline()
+        c.answer_model = LLMProvider.CLAUDE_SONNET
+        c.experiment_name = "S4-HYB-P0"
+        c.description = "Claude Sonnet 4 — hybrid + P0 grounding rules"
+        return c
+
     def to_dict(self) -> dict:
         """Convert config to dictionary for logging/serialization."""
         return {
@@ -376,6 +385,8 @@ ABLATION_PRESETS = {
     "G4-VEC": AblationConfig.g4_vec(),
     "G4-GRF": AblationConfig.g4_grf(),
     "G4-HYB": AblationConfig.g4_hyb(),
+    # P0 improvement configurations
+    "S4-HYB-P0": AblationConfig.s4_hyb_p0(),
 }
 
 # Ordered list for the ablation study run

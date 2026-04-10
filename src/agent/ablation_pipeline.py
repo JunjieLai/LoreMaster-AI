@@ -178,6 +178,13 @@ class AblationPipeline:
 - Only use information from the provided context
 - If context is insufficient, clearly state this
 
+## Grounding Rules (CRITICAL — follow strictly)
+- ONLY assert facts that are explicitly stated in the provided context above.
+- If the question asks about a specific event, case, named example, or named person that does NOT appear anywhere in the provided context, explicitly state: "The available documents contain no record of this." Do NOT fabricate a plausible example or event.
+- For inferences that go beyond what the documents directly state, always use hedging language ("This may suggest...", "It can be inferred...", "Based on the available evidence..."). NEVER present an inference as a confirmed fact.
+- For specific names, dates, titles, or numerical facts, only state what is directly documented. If unsure, say so.
+- It is better to give a shorter, accurate answer than a longer answer that invents details.
+
 ## Answer"""
 
     def answer(self, question: str) -> dict:

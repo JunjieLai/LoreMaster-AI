@@ -1,11 +1,13 @@
-import { useState, useRef, useEffect, createContext, useContext, useCallback } from 'react';
+import { useState, useRef, useEffect, useMemo, createContext, useContext, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Settings, Sparkles, Send, RotateCcw, GripVertical, GripHorizontal, Network } from 'lucide-react';
+import { Sparkles, Send, RotateCcw, GripVertical, GripHorizontal, Network, ChevronLeft, ChevronRight, Clock } from 'lucide-react';
 import { ChatMessage } from './components/ChatMessage';
 import { ConstellationGraph } from './components/ConstellationGraph';
 import { SourceRegistry } from './components/SourceRegistry';
 import { GraphExplorerPortal } from './components/GraphExplorer';
-import { Message, PathData, Source } from './types';
+import { HistoryExplorerPortal } from './components/HistoryExplorer';
+import { Message } from './types';
+import { API_BASE } from './config';
 
 // Theme Context
 interface ThemeContextType {
@@ -24,8 +26,17 @@ export const ThemeContext = createContext<ThemeContextType>({
 
 export const useTheme = () => useContext(ThemeContext);
 
-// API base URL
-const API_BASE = 'http://localhost:8000';
+
+const SESSION_STORAGE_KEY = 'loremaster_session_id';
+const MESSAGES_STORAGE_KEY = 'loremaster_messages';
+const CONVERSATIONS_STORAGE_KEY = 'loremaster_conversations';
+const MAX_STORED_CONVERSATIONS = 20;
+
+interface StoredConversation {
+  sessionId: string;
+  startedAt: number;
+  messages: Message[];
+}
 
 // Default questions for the welcome screen (5 test questions)
 const DEFAULT_QUESTIONS = [
@@ -41,7 +52,15 @@ function generateId() {
 }
 
 export default function App() {
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<Message[]>(() => {
+    try {
+      const saved = localStorage.getItem(MESSAGES_STORAGE_KEY);
+      if (!saved) return [];
+      return (JSON.parse(saved) as Message[]).filter(m => !m.streaming);
+    } catch {
+      return [];
+    }
+  });
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [hoveredEntity, setHoveredEntity] = useState<string | null>(null);
@@ -49,7 +68,20 @@ export default function App() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  // Session ID persisted in localStorage for multi-turn memory
+  const [sessionId, setSessionId] = useState<string | null>(() =>
+    localStorage.getItem(SESSION_STORAGE_KEY)
+  );
+
+  const [storedConversations, setStoredConversations] = useState<StoredConversation[]>(() => {
+    try {
+      const saved = localStorage.getItem(CONVERSATIONS_STORAGE_KEY);
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
+
   const [showGraphExplorer, setShowGraphExplorer] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
 
   // Resizable panel states
   const [mainSplitPercent, setMainSplitPercent] = useState(60); // Chat vs Sidebar
@@ -57,33 +89,64 @@ export default function App() {
   const [isResizingMain, setIsResizingMain] = useState(false);
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
 
-  // Get the latest assistant message for the right pane
-  const latestAssistantMessage = [...messages].reverse().find(m => m.role === 'assistant');
+  // Selected message: right panels follow this message's graph/sources.
+  // null = auto-follow latest assistant message.
+  const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
+  const selectedMessage = selectedMessageId
+    ? messages.find(m => m.id === selectedMessageId)
+    : [...messages].reverse().find(m => m.role === 'assistant');
+
+  // Flat list of completed (non-streaming) assistant messages — shared by turn numbers, session bar, and nav buttons
+  const assistantMessages = useMemo(
+    () => messages.filter(m => m.role === 'assistant' && !m.streaming),
+    [messages]
+  );
+
+  // Navigation index within assistantMessages
+  const currentNavIndex = useMemo(() => {
+    if (!selectedMessage) return assistantMessages.length - 1;
+    const idx = assistantMessages.findIndex(m => m.id === selectedMessage.id);
+    return idx >= 0 ? idx : assistantMessages.length - 1;
+  }, [assistantMessages, selectedMessageId]);
+  const hasPrev = currentNavIndex > 0;
+  const hasNext = currentNavIndex < assistantMessages.length - 1;
+
+  // Clear stale entity selection/hover when switching to a different message's graph
+  useEffect(() => {
+    setSelectedEntity(null);
+    setHoveredEntity(null);
+  }, [selectedMessageId]);
+
+  // Persist messages to localStorage (skip streaming placeholders)
+  useEffect(() => {
+    const stable = messages.filter(m => !m.streaming);
+    if (stable.length > 0) {
+      localStorage.setItem(MESSAGES_STORAGE_KEY, JSON.stringify(stable));
+    }
+  }, [messages]);
 
   // Auto-scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Handle main split resize
+  // Handle main split resize — stable callback (no guard needed; only registered while dragging)
   const handleMainMouseMove = useCallback((e: MouseEvent) => {
-    if (!isResizingMain) return;
     const container = document.getElementById('main-container');
     if (!container) return;
     const rect = container.getBoundingClientRect();
     const newPercent = ((e.clientX - rect.left) / rect.width) * 100;
     setMainSplitPercent(Math.min(Math.max(newPercent, 30), 80));
-  }, [isResizingMain]);
+  }, []);
 
-  // Handle sidebar split resize
+  // Handle sidebar split resize — stable callback
   const handleSidebarMouseMove = useCallback((e: MouseEvent) => {
-    if (!isResizingSidebar) return;
     const container = document.getElementById('sidebar-container');
     if (!container) return;
     const rect = container.getBoundingClientRect();
     const newPercent = ((e.clientY - rect.top) / rect.height) * 100;
     setSidebarSplitPercent(Math.min(Math.max(newPercent, 25), 75));
-  }, [isResizingSidebar]);
+  }, []);
 
   const handleMouseUp = useCallback(() => {
     setIsResizingMain(false);
@@ -106,8 +169,6 @@ export default function App() {
     };
   }, [isResizingMain, isResizingSidebar, handleMainMouseMove, handleSidebarMouseMove, handleMouseUp]);
 
-  const [error, setError] = useState<string | null>(null);
-
   const handleSend = async (customInput?: string) => {
     const messageContent = customInput || input;
     if (!messageContent.trim() || isLoading) return;
@@ -120,15 +181,21 @@ export default function App() {
     setMessages((prev) => [...prev, userMessage]);
     setInput('');
     setIsLoading(true);
-    setError(null);
+
+    // Placeholder assistant message that gets updated as tokens stream in
+    const assistantId = generateId();
+    setMessages((prev) => [...prev, {
+      id: assistantId,
+      role: 'assistant',
+      content: '',
+      streaming: true,
+    }]);
 
     try {
-      const response = await fetch(`${API_BASE}/api/query`, {
+      const response = await fetch(`${API_BASE}/api/query/stream`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ question: messageContent.trim() }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: messageContent.trim(), session_id: sessionId }),
       });
 
       if (!response.ok) {
@@ -136,38 +203,82 @@ export default function App() {
         throw new Error(errorData.detail || `API error: ${response.status}`);
       }
 
-      const data = await response.json();
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let finalMetadata: Record<string, unknown> | null = null;
 
-      // Map API response to Message type
-      const assistantMessage: Message = {
-        id: generateId(),
-        role: 'assistant',
-        content: data.answer,
-        sources: data.sources,
-        path: data.path,
-        entities: data.entities,
-        queryType: data.query_type,
-        timing: {
-          total: data.timing.total,
-          retrieval: data.timing.retrieval,
-          generation: data.timing.generation,
-        },
-        cost: data.cost,
-      };
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-      setMessages((prev) => [...prev, assistantMessage]);
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          let event: Record<string, unknown>;
+          try {
+            event = JSON.parse(line.slice(6));
+          } catch {
+            continue; // skip malformed SSE lines
+          }
+          if (event.type === 'token') {
+            setMessages((prev) => prev.map((m) =>
+              m.id === assistantId
+                ? { ...m, content: m.content + (event.content as string) }
+                : m
+            ));
+          } else if (event.type === 'metadata') {
+            finalMetadata = event;
+            // Persist session_id
+            if (event.session_id) {
+              setSessionId(event.session_id as string);
+              localStorage.setItem(SESSION_STORAGE_KEY, event.session_id as string);
+            }
+          } else if (event.type === 'error') {
+            throw new Error(event.message as string);
+          }
+        }
+      }
+
+      // Enrich the assistant message with metadata once streaming is done
+      if (finalMetadata) {
+        const meta = finalMetadata;
+        setMessages((prev) => prev.map((m) =>
+          m.id === assistantId
+            ? {
+                ...m,
+                streaming: false,
+                sources: meta.sources as Message['sources'],
+                path: meta.path as Message['path'],
+                graphResults: meta.graph_results as Message['graphResults'],
+                entities: meta.entities as string[],
+                queryType: meta.query_type as string,
+                cacheHit: meta.cache_hit as boolean,
+              }
+            : m
+        ));
+      } else {
+        setMessages((prev) => prev.map((m) =>
+          m.id === assistantId ? { ...m, streaming: false } : m
+        ));
+      }
+      // Auto-select the new answer so right panels update immediately
+      setSelectedMessageId(assistantId);
     } catch (err) {
       console.error('API Error:', err);
       const errorMessage = err instanceof Error ? err.message : 'An unexpected error occurred';
-      setError(errorMessage);
-
-      // Add error message as assistant response
-      const errorAssistantMessage: Message = {
-        id: generateId(),
-        role: 'assistant',
-        content: `I apologize, but I encountered an error while processing your question. ${errorMessage}\n\nPlease make sure the backend server is running and try again.`,
-      };
-      setMessages((prev) => [...prev, errorAssistantMessage]);
+      setMessages((prev) => prev.map((m) =>
+        m.id === assistantId
+          ? {
+              ...m,
+              streaming: false,
+              content: `I apologize, but I encountered an error: ${errorMessage}\n\nPlease make sure the backend server is running and try again.`,
+            }
+          : m
+      ));
     } finally {
       setIsLoading(false);
     }
@@ -205,14 +316,19 @@ export default function App() {
             </div>
             <button
               type="button"
+              title="History"
+              onClick={() => setShowHistory(true)}
+              className="p-2 rounded-full hover:bg-primary/10 text-primary/70 hover:text-primary transition-all duration-300"
+            >
+              <Clock className="w-5 h-5" />
+            </button>
+            <button
+              type="button"
               title="Knowledge Graph Explorer"
               onClick={() => setShowGraphExplorer(true)}
               className="p-2 rounded-full hover:bg-primary/10 text-primary/70 hover:text-primary transition-all duration-300"
             >
               <Network className="w-5 h-5" />
-            </button>
-            <button type="button" title="Settings" className="p-2 rounded-full hover:bg-primary/10 text-primary/70 hover:text-primary transition-all duration-300">
-              <Settings className="w-5 h-5" />
             </button>
           </div>
         </header>
@@ -249,7 +365,7 @@ export default function App() {
                     Welcome, Traveler
                   </h2>
                   <p className="text-gray-400 max-w-md mx-auto text-sm mb-8">
-                    Ask me anything about Teyvat's history, character relationships, or the secrets of the world.
+                    Explore Sumeru's lore — ask about characters, ancient history, entity relationships, or the secrets hidden within Irminsul.
                   </p>
 
                   {/* Default Questions */}
@@ -281,11 +397,33 @@ export default function App() {
                 </motion.div>
               )}
 
+              {/* Session status bar — visible once at least one answer exists */}
+              {sessionId && assistantMessages.length > 0 && (
+                <div className="flex items-center gap-2.5 text-[10px] font-mono text-gray-600 pb-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-green-400/50 shrink-0" />
+                  <span>SESSION {sessionId.slice(0, 8).toUpperCase()}</span>
+                  <span className="text-gray-700">·</span>
+                  <span>{assistantMessages.length} {assistantMessages.length === 1 ? 'turn' : 'turns'}</span>
+                </div>
+              )}
+
               {/* Messages */}
               <AnimatePresence mode="popLayout">
-                {messages.map((message) => (
-                  <ChatMessage key={message.id} message={message} />
-                ))}
+                {(() => {
+                  let turnCount = 0;
+                  return messages.map((message) => {
+                    if (message.role === 'assistant') turnCount++;
+                    return (
+                      <ChatMessage
+                        key={message.id}
+                        message={message}
+                        isSelected={message.role === 'assistant' && message.id === selectedMessage?.id}
+                        onSelect={message.role === 'assistant' ? () => setSelectedMessageId(message.id) : undefined}
+                        turnNumber={message.role === 'assistant' ? turnCount : undefined}
+                      />
+                    );
+                  });
+                })()}
 
                 {/* Loading Indicator */}
                 {isLoading && (
@@ -327,7 +465,25 @@ export default function App() {
                   <button
                     type="button"
                     title="New conversation"
-                    onClick={() => setMessages([])}
+                    onClick={() => {
+                      // Archive current session before clearing
+                      const stableMessages = messages.filter(m => !m.streaming);
+                      if (stableMessages.length > 0 && sessionId) {
+                        const archived: StoredConversation = {
+                          sessionId,
+                          startedAt: Date.now() / 1000,
+                          messages: stableMessages,
+                        };
+                        const updated = [archived, ...storedConversations].slice(0, MAX_STORED_CONVERSATIONS);
+                        setStoredConversations(updated);
+                        localStorage.setItem(CONVERSATIONS_STORAGE_KEY, JSON.stringify(updated));
+                      }
+                      setMessages([]);
+                      setSessionId(null);
+                      setSelectedMessageId(null);
+                      localStorage.removeItem(SESSION_STORAGE_KEY);
+                      localStorage.removeItem(MESSAGES_STORAGE_KEY);
+                    }}
                     className="p-3 text-primary/60 hover:text-primary transition-colors rounded-lg hover:bg-primary/5 shrink-0"
                   >
                     <RotateCcw className="w-5 h-5" />
@@ -361,7 +517,7 @@ export default function App() {
           {/* Main Resize Handle */}
           <div
             className="hidden lg:flex w-2 cursor-col-resize items-center justify-center z-30 hover:bg-primary/20 transition-colors group"
-            onMouseDown={() => setIsResizingMain(true)}
+            onMouseDown={(e) => { e.preventDefault(); setIsResizingMain(true); }}
           >
             <div className="w-1 h-12 rounded-full bg-primary/30 group-hover:bg-primary/60 transition-colors flex items-center justify-center">
               <GripVertical className="w-3 h-3 text-primary/50 group-hover:text-primary" />
@@ -398,25 +554,64 @@ export default function App() {
               className="relative w-full bg-navy-deep/50 overflow-hidden border-b border-primary/20"
               style={{ height: `${sidebarSplitPercent}%` }}
             >
-              <div className="absolute top-4 left-4 z-10 flex flex-col gap-1">
+              <div className="absolute top-4 left-4 right-4 z-10 flex items-center justify-between">
                 <h2 className="text-sm font-bold text-primary tracking-widest uppercase flex items-center gap-2 drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">
                   <span className="w-5 h-5 bg-primary/20 rounded rotate-45 flex items-center justify-center border border-primary/30">
                     <Sparkles className="w-3 h-3 text-primary -rotate-45" />
                   </span>
                   Constellation Map
                 </h2>
+                {/* History navigation — shown when 2+ answers exist */}
+                {assistantMessages.length >= 2 && (
+                  <div className="flex items-center gap-0.5">
+                    <button
+                      type="button"
+                      title="Previous answer"
+                      disabled={!hasPrev}
+                      onClick={() => setSelectedMessageId(assistantMessages[currentNavIndex - 1].id)}
+                      className="p-1 rounded text-primary/50 hover:text-primary hover:bg-primary/10 disabled:opacity-25 disabled:cursor-not-allowed transition-colors"
+                    >
+                      <ChevronLeft className="w-3.5 h-3.5" />
+                    </button>
+                    <span className="text-[10px] font-mono text-primary/40 select-none w-8 text-center">
+                      {currentNavIndex + 1}/{assistantMessages.length}
+                    </span>
+                    <button
+                      type="button"
+                      title="Next answer"
+                      disabled={!hasNext}
+                      onClick={() => setSelectedMessageId(assistantMessages[currentNavIndex + 1].id)}
+                      className="p-1 rounded text-primary/50 hover:text-primary hover:bg-primary/10 disabled:opacity-25 disabled:cursor-not-allowed transition-colors"
+                    >
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
               </div>
 
-              {latestAssistantMessage?.path ? (
-                <ConstellationGraph pathData={latestAssistantMessage.path} />
+              {(selectedMessage?.path || selectedMessage?.graphResults?.length) ? (
+                <ConstellationGraph
+                  key={selectedMessage.id}
+                  pathData={selectedMessage.path}
+                  graphResults={selectedMessage.graphResults}
+                />
               ) : (
                 <div className="w-full h-full flex items-center justify-center">
                   <div className="text-center text-gray-500">
                     <div className="w-16 h-16 mx-auto mb-4 border border-primary/20 rounded-lg rotate-45 flex items-center justify-center">
                       <Sparkles className="w-8 h-8 text-primary/30 -rotate-45" />
                     </div>
-                    <p className="text-sm">No constellation data yet</p>
-                    <p className="text-xs text-gray-600 mt-1">Ask a question to see entity relationships</p>
+                    {messages.some(m => m.role === 'assistant') ? (
+                      <>
+                        <p className="text-sm">Click an answer to view its map</p>
+                        <p className="text-xs text-gray-600 mt-1">Each answer has its own relationship graph</p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-sm">No constellation data yet</p>
+                        <p className="text-xs text-gray-600 mt-1">Ask a question to see entity relationships</p>
+                      </>
+                    )}
                   </div>
                 </div>
               )}
@@ -425,7 +620,7 @@ export default function App() {
             {/* Sidebar Resize Handle */}
             <div
               className="h-2 cursor-row-resize flex items-center justify-center z-30 hover:bg-primary/20 transition-colors group"
-              onMouseDown={() => setIsResizingSidebar(true)}
+              onMouseDown={(e) => { e.preventDefault(); setIsResizingSidebar(true); }}
             >
               <div className="h-1 w-12 rounded-full bg-primary/30 group-hover:bg-primary/60 transition-colors flex items-center justify-center">
                 <GripHorizontal className="w-3 h-3 text-primary/50 group-hover:text-primary" />
@@ -444,15 +639,15 @@ export default function App() {
                   </span>
                   Source Registry
                 </h2>
-                {latestAssistantMessage?.sources && (
+                {selectedMessage?.sources && (
                   <span className="text-[10px] font-mono text-primary/80 bg-black/40 px-2 py-0.5 rounded border border-primary/30">
-                    {latestAssistantMessage.sources.length} Relevant Sources
+                    {selectedMessage.sources.length} Relevant Sources
                   </span>
                 )}
               </div>
               <div className="overflow-y-auto p-4 space-y-3 flex-1">
-                {latestAssistantMessage?.sources ? (
-                  <SourceRegistry sources={latestAssistantMessage.sources} />
+                {selectedMessage?.sources ? (
+                  <SourceRegistry key={selectedMessage.id} sources={selectedMessage.sources} />
                 ) : (
                   <div className="text-center text-gray-500 py-8">
                     <p className="text-sm">No sources available</p>
@@ -472,6 +667,14 @@ export default function App() {
       <GraphExplorerPortal
         isOpen={showGraphExplorer}
         onClose={() => setShowGraphExplorer(false)}
+      />
+
+      {/* History Explorer */}
+      <HistoryExplorerPortal
+        isOpen={showHistory}
+        onClose={() => setShowHistory(false)}
+        messages={messages}
+        storedConversations={storedConversations}
       />
     </ThemeContext.Provider>
   );

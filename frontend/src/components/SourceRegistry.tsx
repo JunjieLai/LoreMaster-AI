@@ -184,7 +184,7 @@ function SourceCard({
       animate={{ opacity: 1, x: 0 }}
       transition={{ delay: index * 0.1 }}
       onClick={handleCardClick}
-      className={`group relative rounded-lg p-3 cursor-pointer overflow-hidden transition-all duration-300 ${
+      className={`group relative rounded-lg p-3 cursor-pointer transition-all duration-300 ${
         isFirst
           ? 'bg-navy-light border border-primary/50 shadow-[0_0_20px_rgba(0,0,0,0.3)] ring-1 ring-primary/20'
           : 'bg-navy-light/40 border border-primary/10 hover:bg-navy-light hover:border-primary/40'

@@ -95,7 +95,10 @@ export function GraphExplorer({ onClose }: GraphExplorerProps) {
   // Build graph data once from raw data — never filtered, so node positions survive type-filter toggles.
   // Filtering is handled via nodeVisibility / linkVisibility props on ForceGraph2D.
   const graphData = useMemo(() => {
-    if (!data) return { nodes: [], links: [] };
+    if (!data) return { nodes: [], links: [], nodeTypeById: new Map<string, string>() };
+
+    // O(N) lookup map: node id → type (avoids O(N) .find() in linkVisible)
+    const nodeTypeById = new Map<string, string>(data.nodes.map(n => [n.id, n.type]));
 
     // Compute degree for node sizing using all links
     const degree: Record<string, number> = {};
@@ -110,8 +113,20 @@ export function GraphExplorer({ onClose }: GraphExplorerProps) {
       nodes: data.nodes.map(n => ({ ...n, val: Math.sqrt(degree[n.id] || 1) })),
       // Shallow-copy links so react-force-graph-2d's mutations don't affect the original
       links: data.links.map(l => ({ ...l })),
+      nodeTypeById,
     };
   }, [data]);
+
+  // Memoized visible counts for toolbar stats — avoids O(N×M) filter on every render
+  const filteredCounts = useMemo(() => {
+    const nodes = graphData.nodes.filter(n => activeTypes.has((n as any).type)).length;
+    const links = graphData.links.filter(l => {
+      const st = typeof l.source === 'object' ? (l.source as any).type : graphData.nodeTypeById.get(l.source as string);
+      const tt = typeof l.target === 'object' ? (l.target as any).type : graphData.nodeTypeById.get(l.target as string);
+      return activeTypes.has(st ?? '') && activeTypes.has(tt ?? '');
+    }).length;
+    return { nodes, links };
+  }, [graphData, activeTypes]);
 
   // Visibility callbacks — these don't recreate the graph, just hide/show
   const nodeVisible = useCallback(
@@ -121,12 +136,12 @@ export function GraphExplorer({ onClose }: GraphExplorerProps) {
   const linkVisible = useCallback(
     (link: any) => {
       const sourceType = typeof link.source === 'object' ? link.source.type
-        : data?.nodes.find(n => n.id === link.source)?.type;
+        : graphData.nodeTypeById.get(link.source);
       const targetType = typeof link.target === 'object' ? link.target.type
-        : data?.nodes.find(n => n.id === link.target)?.type;
+        : graphData.nodeTypeById.get(link.target);
       return activeTypes.has(sourceType ?? '') && activeTypes.has(targetType ?? '');
     },
-    [activeTypes, data]
+    [activeTypes, graphData.nodeTypeById]
   );
 
   // Build adjacency for selected node panel.
@@ -139,10 +154,15 @@ export function GraphExplorer({ onClose }: GraphExplorerProps) {
 
   const selectedNodeLinks = useMemo(() => {
     if (!selectedNode || !data) return [];
-    return graphData.links.filter(
-      l => linkSourceId(l) === selectedNode.id || linkTargetId(l) === selectedNode.id
-    );
-  }, [selectedNode, graphData.links]);
+    return graphData.links.filter(l => {
+      const isConnected = linkSourceId(l) === selectedNode.id || linkTargetId(l) === selectedNode.id;
+      if (!isConnected) return false;
+      // Hide links whose other endpoint is currently filtered out
+      const otherId = linkSourceId(l) === selectedNode.id ? linkTargetId(l) : linkSourceId(l);
+      const otherType = graphData.nodeTypeById.get(otherId) ?? '';
+      return activeTypes.has(otherType);
+    });
+  }, [selectedNode, graphData.links, graphData.nodeTypeById, activeTypes]);
 
   // Handle node click — typed as `any` to satisfy react-force-graph-2d's callback signature
   const handleNodeClick = useCallback((node: any) => {
@@ -253,13 +273,9 @@ return (
         {/* Stats */}
         {data && (
           <span className="text-[10px] font-mono text-primary/60 bg-black/30 px-2 py-0.5 rounded border border-primary/20 shrink-0">
-            {graphData.nodes.filter(n => activeTypes.has((n as any).type)).length} nodes
+            {filteredCounts.nodes} nodes
             {' · '}
-            {graphData.links.filter(l => {
-              const st = typeof l.source === 'object' ? (l.source as any).type : data.nodes.find(n => n.id === l.source)?.type;
-              const tt = typeof l.target === 'object' ? (l.target as any).type : data.nodes.find(n => n.id === l.target)?.type;
-              return activeTypes.has(st ?? '') && activeTypes.has(tt ?? '');
-            }).length} edges
+            {filteredCounts.links} edges
           </span>
         )}
 

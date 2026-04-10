@@ -18,25 +18,23 @@ export interface PathData {
   }[];
 }
 
-export interface GraphNode {
-  id: string;
-  name: string;
-  type?: string;
-  val?: number;
-  color?: string;
-  isMain?: boolean;
-}
-
-export interface GraphLink {
-  source: string;
-  target: string;
+export interface GraphRelationship {
+  direction: 'outgoing' | 'incoming';
   relation: string;
-  isAlternative?: boolean;
+  target?: string;
+  target_type?: string;
+  source?: string;
+  source_type?: string;
+  evidence?: string;
 }
 
-export interface GraphData {
-  nodes: GraphNode[];
-  links: GraphLink[];
+export interface GraphResult {
+  entity: {
+    name: string;
+    type: string;
+    description?: string;
+  };
+  relationships: GraphRelationship[];
 }
 
 export interface Message {
@@ -45,6 +43,7 @@ export interface Message {
   content: string;
   sources?: Source[];
   path?: PathData;
+  graphResults?: GraphResult[];
   entities?: string[];
   queryType?: string;
   timing?: {
@@ -53,37 +52,9 @@ export interface Message {
     generation?: number;
   };
   cost?: number;
+  streaming?: boolean;
+  cacheHit?: boolean;
 }
-
-export interface Config {
-  name: string;
-  description: string;
-  icon: string;
-}
-
-export const CONFIGS: Config[] = [
-  { name: 'full_pipeline', description: 'Full Pipeline (Recommended)', icon: '🚀' },
-  { name: 'fast_mode', description: 'Fast Mode', icon: '⚡' },
-  { name: 'gpt4o_mode', description: 'GPT-4o Mode', icon: '🤖' },
-  { name: 'vector_only', description: 'Vector Search Only', icon: '🔍' },
-  { name: 'graph_only', description: 'Graph Search Only', icon: '🕸️' },
-  { name: 'baseline', description: 'Baseline', icon: '📊' },
-];
-
-export const ENTITY_ICONS: Record<string, string> = {
-  Character: '🎭',
-  NPC: '👤',
-  Location: '🏛️',
-  Region: '🗺️',
-  Lore: '📜',
-  Quest: '📖',
-  Weapon: '⚔️',
-  Artifact: '🔮',
-  Organization: '🏰',
-  Event: '⚡',
-  Concept: '💫',
-  default: '📄',
-};
 
 export const ENTITY_COLORS: Record<string, string> = {
   Character: '#EF7A35',  // Pyro

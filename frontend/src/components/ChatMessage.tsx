@@ -1,13 +1,16 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Clock, Coins, ThumbsUp, Copy, Sparkles, X, ExternalLink, MapPin, BookOpen } from 'lucide-react';
+import { Clock, Coins, ThumbsUp, Copy, Sparkles, X, ExternalLink, MapPin, BookOpen, Zap } from 'lucide-react';
 import { Message, Source, ENTITY_COLORS } from '../types';
 import { useTheme } from '../App';
 import { useThumbnail } from '../hooks/useThumbnail';
 
 interface ChatMessageProps {
   message: Message;
+  isSelected?: boolean;
+  onSelect?: () => void;
+  turnNumber?: number;
 }
 
 // Source Modal Component
@@ -130,6 +133,15 @@ function SourceModal({
   );
 }
 
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 // Parse content and highlight entities with gold theme
 function parseContent(content: string, entities: string[] | undefined): string {
   let result = content;
@@ -174,7 +186,7 @@ function parseContent(content: string, entities: string[] | undefined): string {
     // Replace markers with highlighted spans
     sortedEntities.forEach((entity, idx) => {
       const marker = `__ENTITY_${idx}__`;
-      const replacement = `<strong class="entity-keyword text-primary font-bold" data-entity="${entity}">${entity}</strong>`;
+      const replacement = `<strong class="entity-keyword text-primary font-bold" data-entity="${escapeHtml(entity)}">${escapeHtml(entity)}</strong>`;
       result = result.split(marker).join(replacement);
     });
   } else {
@@ -189,7 +201,7 @@ function parseContent(content: string, entities: string[] | undefined): string {
   return result;
 }
 
-export function ChatMessage({ message }: ChatMessageProps) {
+export function ChatMessage({ message, isSelected, onSelect, turnNumber }: ChatMessageProps) {
   const { setHoveredEntity } = useTheme();
   const [selectedSource, setSelectedSource] = useState<Source | null>(null);
   const isUser = message.role === 'user';
@@ -215,10 +227,11 @@ export function ChatMessage({ message }: ChatMessageProps) {
       const sourceName = target.getAttribute('data-source');
       if (sourceName && message.sources) {
         // Find the source that matches the name (partial match)
-        const source = message.sources.find(s =>
-          s.title.toLowerCase().includes(sourceName.toLowerCase()) ||
-          sourceName.toLowerCase().includes(s.title.toLowerCase())
-        );
+        const sourceLower = sourceName.toLowerCase();
+        const source =
+          message.sources.find(s => s.title.toLowerCase() === sourceLower) ||
+          message.sources.find(s => s.title.toLowerCase().includes(sourceLower)) ||
+          message.sources.find(s => sourceLower.includes(s.title.toLowerCase()));
         if (source) {
           setSelectedSource(source);
         }
@@ -255,7 +268,8 @@ export function ChatMessage({ message }: ChatMessageProps) {
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="flex gap-5 max-w-3xl mx-auto relative group/chat"
+        className={`flex gap-5 max-w-3xl mx-auto relative group/chat ${onSelect ? 'cursor-pointer' : ''}`}
+        onClick={onSelect}
       >
         {/* AI Avatar */}
         <div className="w-10 h-10 relative shrink-0">
@@ -265,9 +279,13 @@ export function ChatMessage({ message }: ChatMessageProps) {
           </div>
         </div>
 
-        {/* Message Content */}
-        <div className="flex flex-col gap-2 max-w-[90%] w-full">
-          <div className="glass-panel rounded-2xl rounded-tl-sm px-6 py-5 text-gray-200 shadow-xl relative overflow-hidden">
+        {/* Message Content — ring lives here (no overflow:hidden, no box-shadow conflict) */}
+        <div className={`flex flex-col gap-2 max-w-[90%] w-full rounded-2xl rounded-tl-sm transition-shadow duration-300 ${isSelected ? 'ring-1 ring-primary/60' : 'hover:ring-1 hover:ring-primary/30'}`}>
+          <div className={`glass-panel rounded-2xl rounded-tl-sm px-6 py-5 text-gray-200 shadow-xl relative overflow-hidden ${isSelected ? 'shadow-[0_0_25px_rgba(212,161,84,0.15)]' : ''}`}>
+            {/* Left accent bar — visible only when selected */}
+            {isSelected && (
+              <div className="absolute left-0 top-3 bottom-3 w-[3px] bg-primary rounded-full" />
+            )}
             {/* Top accent line */}
             <div className="absolute top-0 left-0 w-full h-px bg-gradient-to-r from-transparent via-primary/60 to-transparent"></div>
 
@@ -292,6 +310,14 @@ export function ChatMessage({ message }: ChatMessageProps) {
               onClick={handleClick}
             />
 
+            {/* Streaming cursor */}
+            {message.streaming && (
+              <div className="flex items-center gap-2 mt-2">
+                <span className="w-0.5 h-4 bg-primary/80 rounded animate-pulse" />
+                <span className="text-[10px] text-primary/50 font-mono uppercase tracking-widest animate-pulse">Generating...</span>
+              </div>
+            )}
+
             {/* Tags */}
             {message.entities && message.entities.length > 0 && (
               <div className="flex flex-wrap gap-2 mt-4 pt-3 border-t border-primary/10">
@@ -309,8 +335,14 @@ export function ChatMessage({ message }: ChatMessageProps) {
             )}
 
             {/* Metadata Badges */}
-            {(message.timing || message.cost) && (
+            {(message.timing || message.cost || message.cacheHit) && (
               <div className="flex flex-wrap gap-2 mt-4 pt-3 border-t border-primary/10">
+                {message.cacheHit && (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sky-900/30 text-sky-400 border border-sky-500/25 text-xs">
+                    <Zap className="w-3 h-3" />
+                    Cached
+                  </span>
+                )}
                 {message.timing && (
                   <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-genshin-accent/15 text-genshin-accent text-xs">
                     <Clock className="w-3 h-3" />
@@ -329,7 +361,12 @@ export function ChatMessage({ message }: ChatMessageProps) {
 
           {/* Action buttons */}
           <div className="flex items-center justify-between px-2 mt-1">
-            <span className="text-[10px] uppercase tracking-wider text-gray-500">LoreMaster</span>
+            <span className="text-[10px] uppercase tracking-wider text-gray-500">
+              LoreMaster
+              {turnNumber !== undefined && (
+                <span className="ml-1.5 text-primary/35 font-mono">#{turnNumber}</span>
+              )}
+            </span>
             <div className="flex gap-2">
               <button type="button" title="Like" className="text-gray-500 hover:text-primary transition-colors p-1 rounded hover:bg-primary/10">
                 <ThumbsUp className="w-4 h-4" />
