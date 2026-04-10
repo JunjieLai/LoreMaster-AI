@@ -1,5 +1,7 @@
 # Loremaster AI — GraphRAG Q&A System for Genshin Impact Lore
 
+[中文版](README_CN.md) | **English**
+
 ---
 
 ## 1. Background
