@@ -109,7 +109,7 @@ class LoreMasterPipeline:
         # embed_query uses LRU so repeated questions are instant.
         # ============================================
         embedding_for_cache = self.query_processor.embed_query(question)
-        cached_result = self.answer_cache.lookup(embedding_for_cache)
+        cached_result = self.answer_cache.lookup(embedding_for_cache, question=question)
         if cached_result is not None:
             cached_copy = dict(cached_result)
             cached_copy["cache_hit"] = True

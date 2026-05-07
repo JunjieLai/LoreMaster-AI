@@ -613,7 +613,7 @@ async def query_loremaster_stream(request: QueryRequest):
                             "source_type": rel.get("source_type"),
                             "evidence": rel.get("evidence"),
                         }
-                        for rel in gr.get("relationships", [])[:5]
+                        for rel in gr.get("relationships", [])[:15]
                     ],
                 })
 

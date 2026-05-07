@@ -67,7 +67,7 @@ A stronger LLM (Claude Opus 4.6) acts as an automated evaluator, comparing candi
 | **Embedding model** | OpenAI text-embedding-3-small (1536-dim) | Document and query vectorization |
 | **Backend** | FastAPI | REST API server with streaming support |
 | **Frontend** | React 18 + TypeScript + TailwindCSS | Chat interface |
-| **Graph viz** | react-force-graph-2d | Force-directed knowledge graph rendering |
+| **Graph viz** | react-force-graph-2d / Custom SVG | Force-directed graph explorer + Sugiyama layered layout for relationship paths |
 | **Animation** | Framer Motion | UI transitions |
 | **Token counting** | tiktoken (cl100k_base) | Precise context budget management |
 | **Runtime** | Python 3.9 | Backend + ETL + ablation study |
@@ -385,7 +385,7 @@ AnswerGenerator (streaming)
 ### 7.4 AnswerGenerator
 
 - Model: Claude Sonnet 4.6 with streaming (SSE to frontend)
-- Language auto-detection (Chinese question → Chinese answer)
+- English-only responses regardless of input language
 - Citation format: `[Source: document title]`
 - Grounding rules: strict fact-only assertions with hedged inference marking
 
@@ -418,7 +418,7 @@ The React frontend provides a multi-panel, resizable layout:
 |-------|-------------|
 | **Chat** | Streaming Q&A with Markdown rendering, source citations, and cost/timing display |
 | **Source Sidebar** | Per-answer source document cards with relevance scores and wiki links |
-| **Constellation Graph** | Force-directed visualization of entity relationship paths from the answer |
+| **Constellation Graph** | Sugiyama layered layout visualization of entity relationship paths from the answer |
 | **Right Sidebar** | Tabs for Sources, Path, and Graph data per answer |
 
 All split panels are independently resizable with drag handles.

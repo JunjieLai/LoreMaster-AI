@@ -72,7 +72,7 @@ RAG = 检索器 + 生成器。核心思想：将外部知识检索后注入 LLM 
 | **嵌入模型** | OpenAI text-embedding-3-small（1536 维） | 文档与查询向量化 |
 | **后端** | FastAPI | REST API + SSE 流式输出 |
 | **前端** | React 18 + TypeScript + TailwindCSS | 聊天界面 |
-| **图可视化** | react-force-graph-2d | 力导向知识图谱渲染 |
+| **图可视化** | react-force-graph-2d / Custom SVG | 力导向图谱浏览器 + Sugiyama 分层布局关系路径可视化 |
 | **动画** | Framer Motion | UI 过渡动效 |
 | **Token 计数** | tiktoken（cl100k_base） | 精确上下文预算管理 |
 | **运行时** | Python 3.9 | 后端 + ETL + 消融实验 |
@@ -309,7 +309,7 @@ AnswerGenerator（流式）
 ### 7.4 AnswerGenerator
 
 - Claude Sonnet 4.6 流式输出（SSE 推流至前端）
-- 语言自动检测（中文问题 → 中文回答）
+- 强制英文回答（无论用户输入何种语言）
 - 引用格式：`[Source: 文档标题]`
 - Grounding 规则：严格断言仅文档中有据可查的事实，推断性内容使用对冲措辞
 
@@ -343,7 +343,7 @@ React 前端提供多面板可调整大小的布局，所有分割面板均可�
 |------|------|
 | **聊天区** | 流式问答 + Markdown 渲染 + 来源引用 + 成本 / 耗时显示 |
 | **来源侧边栏** | 每条答案的来源文档卡片，含相关度分数和 Wiki 链接 |
-| **星座图** | 答案中实体关系路径的力导向可视化 |
+| **星座图** | 答案中实体关系路径的 Sugiyama 分层布局可视化 |
 | **右侧边栏** | 每条答案的 Sources / Path / Graph 数据 Tab |
 
 ### 8.2 知识图谱浏览器（Graph Explorer）

@@ -15,6 +15,7 @@ import json
 import logging
 import math
 import os
+import re
 import threading
 import time
 from typing import List, Optional, Set
@@ -25,6 +26,13 @@ CACHE_FILE = os.path.join(
     os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")),
     "data", "answer_cache.json"
 )
+
+_CJK_RE = re.compile(r'[\u4e00-\u9fff\u3040-\u30ff]')
+
+
+def _detect_lang(text: str) -> str:
+    """Return 'zh' if text contains CJK characters, else 'en'."""
+    return "zh" if _CJK_RE.search(text) else "en"
 
 
 def _cosine_similarity(a: List[float], b: List[float]) -> float:
@@ -54,11 +62,23 @@ class SemanticAnswerCache:
         self._write_lock = threading.Lock()
         self._load()
 
-    def lookup(self, embedding: List[float]) -> Optional[dict]:
-        """Return cached result if a similar-enough query exists, else None."""
+    def lookup(self, embedding: List[float], question: str = "") -> Optional[dict]:
+        """Return cached result if a similar-enough query exists in the same language, else None."""
+        query_lang = _detect_lang(question) if question else None
         best_sim = 0.0
         best_result = None
         for entry in self._entries:
+            # Language guard: skip entries whose stored answer is in a different language
+            if query_lang is not None:
+                entry_lang = entry.get("lang")
+                if entry_lang is None:
+                    # Legacy entry without lang tag — infer from stored answer text
+                    answer_text = ""
+                    if isinstance(entry.get("result"), dict):
+                        answer_text = entry["result"].get("answer", "")
+                    entry_lang = _detect_lang(answer_text)
+                if entry_lang != query_lang:
+                    continue
             sim = _cosine_similarity(embedding, entry["embedding"])
             if sim > best_sim:
                 best_sim = sim
@@ -88,10 +108,12 @@ class SemanticAnswerCache:
             self._writing.add(question)
 
         try:
+            answer_text = result.get("answer", "") if isinstance(result, dict) else ""
             self._entries.append({
                 "embedding": embedding,
                 "question": question,
                 "result": result,
+                "lang": _detect_lang(answer_text),
                 "ts": time.time(),
             })
             if len(self._entries) > self.max_size:
