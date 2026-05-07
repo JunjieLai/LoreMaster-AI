@@ -356,7 +356,7 @@ AnswerGenerator (streaming)
 | Feature | Implementation |
 |---------|---------------|
 | **Entity extraction** | Regex + Claude Haiku for character / location / organization detection |
-| **Alias resolution** | DynamoDB lookup — "Wanderer" / "流浪者" / "Kunikuzushi" → canonical name |
+| **Alias resolution** | DynamoDB lookup — "Wanderer" / "Kunikuzushi" → canonical name |
 | **Query classification** | Haiku semantic classification (5 types) — drives retrieval strategy |
 | **Query expansion** | Generates 2–3 paraphrased variants to broaden recall |
 | **Embedding cache** | LRU cache — skips re-embedding for repeated or similar queries |
